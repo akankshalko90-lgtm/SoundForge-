@@ -1,0 +1,5 @@
+{
+  "name": "SoundForge: AI Voice Generator",
+  "description": "A powerful Text-to-Speech (TTS) web application that converts text into natural-sounding audio using AI. Customize voice, pitch, speed, and emotion to generate high-quality speech in various languages.",
+  "requestFramePermissions": []
+}
