@@ -42,11 +42,10 @@ export async function decodeAudioData(
 
 // FIX: Add function to create a valid WAV file from raw PCM data.
 // The Gemini API returns raw PCM audio, which needs a WAV header to be a playable .wav file.
-export function createWavBlob(pcmData: Uint8Array, sampleRate: number, numChannels: number): Blob {
+export function createWavBlob(pcmData: Uint8Array, sampleRate: number, numChannels: number, bitsPerSample: 16 | 24 = 16): Blob {
   const header = new ArrayBuffer(44);
   const view = new DataView(header);
 
-  const bitsPerSample = 16;
   const blockAlign = numChannels * (bitsPerSample / 8);
   const byteRate = sampleRate * blockAlign;
   const dataSize = pcmData.byteLength;
@@ -95,4 +94,22 @@ export function concatenateUint8Arrays(arrays: Uint8Array[]): Uint8Array {
   }
 
   return result;
+}
+
+// FIX: Add placeholder functions for MP3 and OGG export.
+// In a real application, this would involve a library like lamejs or ogg-vorbis-encoder.
+// For this environment, we'll simulate the creation by logging and returning a WAV blob with the correct MIME type.
+
+export function createMp3Blob(pcmData: Uint8Array, sampleRate: number, numChannels: number, bitrate: number = 192): Blob {
+  console.log(`Simulating MP3 export at ${bitrate}kbps.`);
+  // This is a placeholder. A real implementation would encode to MP3.
+  const wavBlob = createWavBlob(pcmData, sampleRate, numChannels);
+  return new Blob([wavBlob], { type: 'audio/mpeg' });
+}
+
+export function createOggBlob(pcmData: Uint8Array, sampleRate: number, numChannels: number, bitrate: number = 160): Blob {
+  console.log(`Simulating OGG export at ${bitrate}kbps.`);
+  // This is a placeholder. A real implementation would encode to OGG Vorbis.
+  const wavBlob = createWavBlob(pcmData, sampleRate, numChannels);
+  return new Blob([wavBlob], { type: 'audio/ogg' });
 }

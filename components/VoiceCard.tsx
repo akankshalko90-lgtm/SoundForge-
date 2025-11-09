@@ -1,39 +1,120 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import type { Voice } from '../types';
 
 interface VoiceCardProps {
   voice: Voice;
   isSelected: boolean;
   onSelect: () => void;
+  onPlaySample: (voiceId: string) => void;
+  isPlayingSample: boolean;
 }
 
-const EmooticIcon: React.FC = () => (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="text-cyan-400">
-        <path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM12 20C7.59 20 4 16.41 4 12C4 7.59 7.59 4 12 4C16.41 4 20 7.59 20 12C20 16.41 16.41 20 12 20Z" fill="currentColor" fillOpacity="0.3"/>
-        <path d="M12,17.5C9.64,17.5 7.5,16.44 6,14.79C5.7,14.44 5.76,13.87 6.11,13.57C6.46,13.27 7.03,13.33 7.33,13.68C8.5,15.03 10.16,15.75 12,15.75C13.84,15.75 15.5,15.03 16.67,13.68C16.97,13.33 17.54,13.27 17.89,13.57C18.24,13.87 18.3,14.44 18,14.79C16.5,16.44 14.36,17.5 12,17.5Z" fill="currentColor"/>
-        <circle cx="9" cy="10.5" r="1.5" fill="currentColor"/>
-        <circle cx="15" cy="10.5" r="1.5" fill="currentColor"/>
+const PlayCircleIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+    <path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM10 16.5V7.5L16 12L10 16.5Z" />
+  </svg>
+);
+
+const CheckCircleIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+    <path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM10.47 16.28L6.22 12.03L7.63 10.62L10.47 13.46L16.37 7.56L17.78 8.97L10.47 16.28Z" />
+  </svg>
+);
+
+const MaleIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" xmlns="http://www.w3.org/2000/svg">
+    <path d="M12 4V12M12 12L9 9M12 12L15 9" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    <circle cx="12" cy="16" r="4" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+);
+
+const FemaleIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="12" cy="10" r="4" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    <path d="M12 14V20M10 17H14" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+);
+
+const UserCircleIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+      <path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM12 6C10.34 6 9 7.34 9 9C9 10.66 10.34 12 12 12C13.66 12 15 10.66 15 9C15 7.34 13.66 6 12 6ZM12 14C9.33 14 4 15.34 4 18V20H20V18C20 15.34 14.67 14 12 14Z" />
     </svg>
 );
 
+const SpinnerIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <svg className={`animate-spin ${className}`} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+    </svg>
+);
 
-export const VoiceCard: React.FC<VoiceCardProps> = ({ voice, isSelected, onSelect }) => {
+export const VoiceCard: React.FC<VoiceCardProps> = ({ voice, isSelected, onSelect, onPlaySample, isPlayingSample }) => {
+  const [imageStatus, setImageStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
+
+  useEffect(() => {
+    setImageStatus('loading');
+  }, [voice.avatarUrl]);
+
+  const handlePlayClick = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (!isPlayingSample) {
+          onPlaySample(voice.id);
+      }
+  };
+
   return (
     <div
-      className={`relative rounded-xl cursor-pointer transition-all duration-300 ${isSelected ? 'p-[2px] bg-gradient-to-r from-cyan-400 to-purple-600' : 'p-[2px] bg-gray-800'}`}
+      className={`relative group bg-[#1A1C2C] rounded-xl cursor-pointer transition-all duration-300 border-2
+        ${isSelected 
+          ? 'border-purple-500' 
+          : 'border-gray-800 hover:border-gray-700'
+        } hover:scale-105 hover:shadow-lg hover:shadow-purple-500/20`}
       onClick={onSelect}
     >
-      <div className="bg-[#1A1C2C] rounded-[10px] p-4 h-full space-y-3">
-        <div className="flex items-center space-x-4">
-          <img src={voice.avatarUrl} alt={voice.name} className="w-12 h-12 rounded-full" />
-          <div className="flex-1">
-            <h3 className="font-semibold text-white">{voice.name}</h3>
-            <p className="text-sm text-gray-400">{voice.language}</p>
+      {isSelected && (
+        <CheckCircleIcon className="absolute -top-2 -right-2 w-6 h-6 text-purple-500 bg-[#1A1C2C] rounded-full z-10" />
+      )}
+      <div className="flex flex-col items-center p-4 space-y-2">
+        <div className="relative w-20 h-20">
+          {imageStatus === 'loading' && (
+            <div className="absolute inset-0 w-20 h-20 rounded-full bg-gray-800 animate-pulse"></div>
+          )}
+          {imageStatus === 'error' && (
+             <div className="w-20 h-20 rounded-full bg-gray-800 flex items-center justify-center border-2 border-gray-700">
+               <UserCircleIcon className="w-16 h-16 text-gray-600" />
+             </div>
+          )}
+          <img 
+            src={voice.avatarUrl} 
+            alt={voice.name} 
+            className={`w-20 h-20 rounded-full border-2 border-gray-700 group-hover:border-cyan-400 transition-all duration-300 ${imageStatus === 'loaded' ? 'opacity-100' : 'opacity-0'}`}
+            onLoad={() => setImageStatus('loaded')}
+            onError={() => setImageStatus('error')}
+          />
+          <div 
+            className={`absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-60 rounded-full flex items-center justify-center transition-all duration-300 ${imageStatus !== 'loaded' ? 'hidden' : ''}`}
+            onClick={handlePlayClick}
+            aria-label={isPlayingSample ? `Loading sample for ${voice.name}` : `Play sample for ${voice.name}`}
+            role="button"
+            tabIndex={0}
+          >
+            {isPlayingSample ? (
+              <SpinnerIcon className="w-8 h-8 text-white" />
+            ) : (
+              <PlayCircleIcon className="w-10 h-10 text-white opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+            )}
           </div>
         </div>
-        <div className="flex items-center space-x-2">
-            <EmooticIcon />
-            <span className="text-xs font-medium text-gray-300">{voice.tag}</span>
+
+        <div className="text-center">
+          <h3 className="font-semibold text-white truncate">{voice.name}</h3>
+          <p className="text-sm text-gray-400">{voice.language}</p>
+        </div>
+        
+        <div className="flex items-center justify-center space-x-2 text-xs text-gray-500 pt-1">
+            {voice.gender === 'Male' && <MaleIcon className="w-4 h-4 text-blue-400" />}
+            {voice.gender === 'Female' && <FemaleIcon className="w-4 h-4 text-pink-400" />}
+            <span className="bg-gray-800/50 px-2 py-0.5 rounded-full">{voice.tag}</span>
         </div>
       </div>
     </div>

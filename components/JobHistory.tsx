@@ -24,6 +24,20 @@ const ChevronDownIcon: React.FC<{ className?: string }> = ({ className }) => (
   <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
 );
 
+const MaleIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 4V12M12 12L9 9M12 12L15 9" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+      <circle cx="12" cy="16" r="4" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+);
+
+const FemaleIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="12" cy="10" r="4" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="M12 14V20M10 17H14" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+);
+
 interface JobHistoryProps {
   jobs: Job[];
   voices: Voice[];
@@ -62,10 +76,10 @@ const JobHistoryItem: React.FC<{ job: Job; voices: Voice[]; onPlay: JobHistoryPr
         <div className="flex items-center space-x-2 flex-shrink-0">
           {job.status === 'completed' && job.audioData && (
             <>
-              <button onClick={handleDownloadCombined} className="text-gray-400 hover:text-cyan-400 transition-colors" aria-label="Download combined audio">
+              <button onClick={handleDownloadCombined} className="text-gray-400 hover:text-cyan-400 transition-all duration-200 transform hover:scale-110" aria-label="Download combined audio">
                 <DownloadIcon className="w-5 h-5" />
               </button>
-              <button onClick={handlePlayCombined} className="text-gray-400 hover:text-cyan-400 transition-colors" aria-label="Play combined audio">
+              <button onClick={handlePlayCombined} className="text-gray-400 hover:text-cyan-400 transition-all duration-200 transform hover:scale-110" aria-label="Play combined audio">
                 <PlayIcon className="w-6 h-6" />
               </button>
             </>
@@ -89,8 +103,15 @@ const JobHistoryItem: React.FC<{ job: Job; voices: Voice[]; onPlay: JobHistoryPr
                 </div>
                 <div className="flex items-center space-x-2 flex-shrink-0">
                   {voiceForChunk && (
-                    <span className="text-xs font-medium text-cyan-300 bg-[#1F3A4E] px-2 py-0.5 rounded-full border border-cyan-800/70">
-                      {voiceForChunk.name}
+                    <div className="flex items-center space-x-1 text-xs font-medium text-cyan-300 bg-[#1F3A4E] px-2 py-0.5 rounded-full border border-cyan-800/70">
+                      <span>{voiceForChunk.name}</span>
+                      {voiceForChunk.gender === 'Male' && <MaleIcon className="w-3 h-3 text-blue-400" />}
+                      {voiceForChunk.gender === 'Female' && <FemaleIcon className="w-3 h-3 text-pink-400" />}
+                    </div>
+                  )}
+                  {chunk.narrationStyle && chunk.narrationStyle !== 'Default' && (
+                    <span className="text-xs font-medium text-yellow-300 bg-[#4A4A2A] px-2 py-0.5 rounded-full border border-yellow-800/70">
+                      {chunk.narrationStyle}
                     </span>
                   )}
                   {chunk.emotion && (
@@ -98,12 +119,17 @@ const JobHistoryItem: React.FC<{ job: Job; voices: Voice[]; onPlay: JobHistoryPr
                       {chunk.emotion}
                     </span>
                   )}
+                  {chunk.effect && chunk.effect !== 'None' && (
+                    <span className="text-xs font-medium text-teal-300 bg-[#1A3F3F] px-2 py-0.5 rounded-full border border-teal-800/70">
+                      {chunk.effect}
+                    </span>
+                  )}
                   {chunk.status === 'completed' && chunk.audioData && (
                      <div className="flex items-center space-x-1">
-                        <button onClick={() => onDownload(chunk.audioData!, `chunk_${index + 1}.wav`)} className="text-gray-400 hover:text-cyan-400 transition-colors" aria-label={`Download chunk ${index + 1}`}>
+                        <button onClick={() => onDownload(chunk.audioData!, `chunk_${index + 1}.wav`)} className="text-gray-400 hover:text-cyan-400 transition-all duration-200 transform hover:scale-110" aria-label={`Download chunk ${index + 1}`}>
                           <DownloadIcon className="w-4 h-4" />
                         </button>
-                        <button onClick={() => onPlay(chunk.audioData!)} className="text-gray-400 hover:text-cyan-400 transition-colors" aria-label={`Play chunk ${index + 1}`}>
+                        <button onClick={() => onPlay(chunk.audioData!)} className="text-gray-400 hover:text-cyan-400 transition-all duration-200 transform hover:scale-110" aria-label={`Play chunk ${index + 1}`}>
                           <PlayIcon className="w-5 h-5" />
                         </button>
                      </div>

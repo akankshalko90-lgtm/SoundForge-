@@ -1,19 +1,31 @@
-import React, { useState, useEffect } from 'react';
-import type { Voice, Emotion, NarrationStyle, Accent } from '../types';
+import React, { useState, useEffect, useRef } from 'react';
+import type { Voice, Emotion, NarrationStyle, Accent, DefinedCharacter, SpecialEffect } from '../types';
 import { ToggleSwitch } from './ToggleSwitch';
-import { EMOTIONS, NARRATION_STYLES, ACCENTS_BY_LANGUAGE } from '../constants';
+import { EMOTIONS, NARRATION_STYLES, ACCENTS_BY_LANGUAGE, SPECIAL_EFFECTS } from '../constants';
+import { CharacterDefinitionPanel } from './CharacterDefinitionPanel';
+import { extractSpeakersFromScript } from '../services/geminiService';
 
 interface GeneratorPanelProps {
   selectedVoice: Voice | null;
-  onGenerate: (text: string, isLongForm: boolean, autoDetectEmotion: boolean, autoDetectSpeakers: boolean) => void;
+  onGenerate: (text: string, isLongForm: boolean, autoDetectEmotion: boolean, autoDetectSpeakers: boolean, autoDetectEffect: boolean, autoDetectNarrationStyle: boolean) => void;
   isLoading: boolean;
   progress: number;
   emotion: Emotion;
   setEmotion: (emotion: Emotion) => void;
   narrationStyle: NarrationStyle;
   setNarrationStyle: (style: NarrationStyle) => void;
+  autoDetectNarrationStyle: boolean;
+  setAutoDetectNarrationStyle: (auto: boolean) => void;
   accent: Accent;
   setAccent: (accent: Accent) => void;
+  definedCharacters: DefinedCharacter[];
+  setDefinedCharacters: (characters: DefinedCharacter[]) => void;
+  smartEmotionBlend: boolean;
+  setSmartEmotionBlend: (blend: boolean) => void;
+  blendEmotion: Emotion;
+  setBlendEmotion: (emotion: Emotion) => void;
+  specialEffect: SpecialEffect;
+  setSpecialEffect: (effect: SpecialEffect) => void;
 }
 
 export const GeneratorPanel: React.FC<GeneratorPanelProps> = ({
@@ -25,29 +37,80 @@ export const GeneratorPanel: React.FC<GeneratorPanelProps> = ({
   setEmotion,
   narrationStyle,
   setNarrationStyle,
+  autoDetectNarrationStyle,
+  setAutoDetectNarrationStyle,
   accent,
-  setAccent
+  setAccent,
+  definedCharacters,
+  setDefinedCharacters,
+  smartEmotionBlend,
+  setSmartEmotionBlend,
+  blendEmotion,
+  setBlendEmotion,
+  specialEffect,
+  setSpecialEffect,
 }) => {
   const [text, setText] = useState('');
   const [isLongForm, setIsLongForm] = useState(false);
   const [autoDetectEmotion, setAutoDetectEmotion] = useState(false);
   const [autoDetectSpeakers, setAutoDetectSpeakers] = useState(false);
+  const [autoDetectEffect, setAutoDetectEffect] = useState(false);
   const [availableAccents, setAvailableAccents] = useState<Accent[]>(['Default']);
+  const [isDetectingCharacters, setIsDetectingCharacters] = useState(false);
+  const debounceTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (selectedVoice) {
-      const baseLanguage = selectedVoice.language.split(' ')[0];
-      const accentsForLang = ACCENTS_BY_LANGUAGE[baseLanguage] || ['Default'];
-      setAvailableAccents(accentsForLang);
-      
-      if (!accentsForLang.includes(accent)) {
+      const isEnglish = selectedVoice.languageCode.startsWith('en-');
+      if (isEnglish) {
+        const baseLanguage = selectedVoice.language.split(' ')[0];
+        const accentsForLang = ACCENTS_BY_LANGUAGE[baseLanguage] || ['Default'];
+        setAvailableAccents(accentsForLang);
+        if (!accentsForLang.includes(accent)) {
+            setAccent('Default');
+        }
+      } else {
+        setAvailableAccents(['Default']);
         setAccent('Default');
       }
     } else {
       setAvailableAccents(['Default']);
       setAccent('Default');
     }
-  }, [selectedVoice, accent, setAccent]);
+  }, [selectedVoice, setAccent]);
+
+  useEffect(() => {
+    if (debounceTimeoutRef.current) {
+      clearTimeout(debounceTimeoutRef.current);
+    }
+
+    if (isLongForm && autoDetectSpeakers && text.trim().length > 50) {
+      debounceTimeoutRef.current = window.setTimeout(async () => {
+        setIsDetectingCharacters(true);
+        try {
+          const detectedCharacters = await extractSpeakersFromScript(text);
+          const existingNames = new Set(definedCharacters.map(c => c.name.toLowerCase()));
+          
+          const newCharacters: DefinedCharacter[] = detectedCharacters
+            .filter(char => !existingNames.has(char.name.toLowerCase()));
+
+          if (newCharacters.length > 0) {
+            setDefinedCharacters([...definedCharacters, ...newCharacters]);
+          }
+        } catch (error) {
+          console.error("Failed to auto-detect characters:", error);
+        } finally {
+          setIsDetectingCharacters(false);
+        }
+      }, 1500); // 1.5 second debounce
+    }
+
+    return () => {
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current);
+      }
+    };
+  }, [text, isLongForm, autoDetectSpeakers, definedCharacters, setDefinedCharacters]);
 
 
   const handleEmotionChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -55,9 +118,19 @@ export const GeneratorPanel: React.FC<GeneratorPanelProps> = ({
     setEmotion(e.target.value as Emotion);
   };
 
+  const handleEffectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setAutoDetectEffect(false); // Disable auto-detect on manual change
+    setSpecialEffect(e.target.value as SpecialEffect);
+  };
+
+  const handleNarrationStyleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setAutoDetectNarrationStyle(false);
+    setNarrationStyle(e.target.value as NarrationStyle);
+  };
+
   const handleSubmit = () => {
     if (!text.trim()) return;
-    onGenerate(text, isLongForm, autoDetectEmotion, autoDetectSpeakers);
+    onGenerate(text, isLongForm, autoDetectEmotion, autoDetectSpeakers, autoDetectEffect, autoDetectNarrationStyle);
   };
   
   return (
@@ -79,52 +152,108 @@ export const GeneratorPanel: React.FC<GeneratorPanelProps> = ({
               </div>
             )}
        </div>
+       
+       {isLongForm && autoDetectSpeakers && (
+          <CharacterDefinitionPanel
+            characters={definedCharacters}
+            setCharacters={setDefinedCharacters}
+            isDetecting={isDetectingCharacters}
+          />
+        )}
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="space-y-2">
+        <div className="space-y-4">
+            <div className="bg-[#1A1C2C] p-4 rounded-xl border border-gray-800 space-y-4">
                 <div className="flex items-center justify-between">
-                    <label htmlFor="emotion-select" className="block text-sm font-medium text-gray-300">Emotion</label>
-                    <ToggleSwitch label="Auto-detect" enabled={autoDetectEmotion} setEnabled={setAutoDetectEmotion} />
+                    <h4 className="text-md font-semibold text-gray-300">Emotion Engine</h4>
+                    <ToggleSwitch label="Auto-detect Emotion" enabled={autoDetectEmotion} setEnabled={setAutoDetectEmotion} />
                 </div>
-                <select
-                    id="emotion-select"
-                    value={emotion}
-                    onChange={handleEmotionChange}
-                    className="w-full bg-[#1A1C2C] border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
-                >
-                    {EMOTIONS.map(e => <option key={e} value={e}>{e}</option>)}
-                </select>
-            </div>
-            
-            <div className="space-y-2">
-                <label htmlFor="accent-select" className="block text-sm font-medium text-gray-300">Accent</label>
-                <select
-                    id="accent-select"
-                    value={accent}
-                    onChange={(e) => setAccent(e.target.value as Accent)}
-                    className="w-full bg-[#1A1C2C] border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
-                >
-                    {availableAccents.map(acc => <option key={acc} value={acc}>{acc}</option>)}
-                </select>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                        <label htmlFor="emotion-select" className="text-xs font-medium text-gray-400">Base Emotion</label>
+                        <select
+                            id="emotion-select"
+                            value={emotion}
+                            onChange={handleEmotionChange}
+                            disabled={autoDetectEmotion}
+                            className="w-full bg-[#0D0F1A] border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {EMOTIONS.map(e => <option key={e} value={e}>{e}</option>)}
+                        </select>
+                    </div>
+                    <div className="space-y-1">
+                        <div className="flex items-center justify-between h-5">
+                            <label htmlFor="blend-emotion-select" className="text-xs font-medium text-gray-400">Blend With</label>
+                            <ToggleSwitch label="Smart Blend" enabled={smartEmotionBlend} setEnabled={setSmartEmotionBlend} />
+                        </div>
+                        <select
+                            id="blend-emotion-select"
+                            value={blendEmotion}
+                            onChange={(e) => setBlendEmotion(e.target.value as Emotion)}
+                            disabled={!smartEmotionBlend || autoDetectEmotion}
+                            className="w-full bg-[#0D0F1A] border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                             <option value="Neutral">None</option>
+                             {EMOTIONS.filter(e => e !== 'Neutral' && e !== emotion).map(e => <option key={e} value={e}>{e}</option>)}
+                        </select>
+                    </div>
+                </div>
             </div>
 
-            <div className="space-y-2">
-                <label htmlFor="style-select" className="block text-sm font-medium text-gray-300">Narration Style</label>
-                <select
-                    id="style-select"
-                    value={narrationStyle}
-                    onChange={(e) => setNarrationStyle(e.target.value as NarrationStyle)}
-                    className="w-full bg-[#1A1C2C] border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
-                >
-                    {NARRATION_STYLES.map(style => <option key={style} value={style}>{style}</option>)}
-                </select>
+            <div className="bg-[#1A1C2C] p-4 rounded-xl border border-gray-800 space-y-4">
+                <h4 className="text-md font-semibold text-gray-300">Styles &amp; Effects</h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="space-y-1">
+                        <div className="flex items-center justify-between h-5">
+                            <label htmlFor="effect-select" className="text-xs font-medium text-gray-400">Special Effect</label>
+                            <ToggleSwitch label="Auto" enabled={autoDetectEffect} setEnabled={setAutoDetectEffect} />
+                        </div>
+                        <select
+                            id="effect-select"
+                            value={specialEffect}
+                            onChange={handleEffectChange}
+                            disabled={autoDetectEffect}
+                            className="w-full bg-[#0D0F1A] border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {SPECIAL_EFFECTS.map(effect => <option key={effect.id} value={effect.id}>{effect.name}</option>)}
+                        </select>
+                    </div>
+                    <div className="space-y-1">
+                        <label htmlFor="accent-select" className="text-xs font-medium text-gray-400 h-5 block">Accent</label>
+                        <select
+                            id="accent-select"
+                            value={accent}
+                            onChange={(e) => setAccent(e.target.value as Accent)}
+                            className="w-full bg-[#0D0F1A] border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled={!selectedVoice?.languageCode.startsWith('en-')}
+                            title={!selectedVoice?.languageCode.startsWith('en-') ? 'Accents are only available for English voices' : ''}
+                        >
+                            {availableAccents.map(acc => <option key={acc} value={acc}>{acc}</option>)}
+                        </select>
+                    </div>
+                    <div className="space-y-1">
+                        <div className="flex items-center justify-between h-5">
+                            <label htmlFor="style-select" className="text-xs font-medium text-gray-400">Narration Style</label>
+                            <ToggleSwitch label="Auto" enabled={autoDetectNarrationStyle} setEnabled={setAutoDetectNarrationStyle} />
+                        </div>
+                        <select
+                            id="style-select"
+                            value={narrationStyle}
+                            onChange={handleNarrationStyleChange}
+                            disabled={autoDetectNarrationStyle}
+                            className="w-full bg-[#0D0F1A] border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {NARRATION_STYLES.map(style => <option key={style} value={style}>{style}</option>)}
+                        </select>
+                    </div>
+                </div>
             </div>
         </div>
+
 
       <button
         onClick={handleSubmit}
         disabled={isLoading || !text.trim() || !selectedVoice}
-        className="w-full bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-bold py-3 px-4 rounded-xl disabled:opacity-50 disabled:cursor-not-allowed hover:from-cyan-400 hover:to-purple-500 transition-all duration-300 shadow-lg shadow-purple-600/30 flex items-center justify-center"
+        className="w-full bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-bold py-3 px-4 rounded-xl disabled:opacity-50 disabled:cursor-not-allowed hover:from-cyan-400 hover:to-purple-500 transition-all duration-300 shadow-lg shadow-purple-600/30 flex items-center justify-center transform hover:-translate-y-1"
       >
         {isLoading ? (
             <>

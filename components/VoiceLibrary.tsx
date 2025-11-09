@@ -6,13 +6,15 @@ interface VoiceLibraryProps {
   voices: Voice[];
   selectedVoice: Voice | null;
   onSelectVoice: (voice: Voice) => void;
+  onPlaySample: (voiceId: string) => void;
+  playingSampleVoiceId: string | null;
 }
 
 const SearchIcon: React.FC = () => (
     <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
 );
 
-export const VoiceLibrary: React.FC<VoiceLibraryProps> = ({ voices, selectedVoice, onSelectVoice }) => {
+export const VoiceLibrary: React.FC<VoiceLibraryProps> = ({ voices, selectedVoice, onSelectVoice, onPlaySample, playingSampleVoiceId }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedLanguage, setSelectedLanguage] = useState('All Languages');
 
@@ -53,7 +55,7 @@ export const VoiceLibrary: React.FC<VoiceLibraryProps> = ({ voices, selectedVoic
           />
         </div>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-64 overflow-y-auto pr-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 gap-4 max-h-64 overflow-y-auto pr-2">
         {filteredVoices.length > 0 ? (
             filteredVoices.map(voice => (
               <VoiceCard
@@ -61,10 +63,12 @@ export const VoiceLibrary: React.FC<VoiceLibraryProps> = ({ voices, selectedVoic
                 voice={voice}
                 isSelected={selectedVoice?.name === voice.name}
                 onSelect={() => onSelectVoice(voice)}
+                onPlaySample={onPlaySample}
+                isPlayingSample={playingSampleVoiceId === voice.id}
               />
             ))
         ) : (
-            <p className="text-gray-500 sm:col-span-2 text-center py-8">No voices match your criteria.</p>
+            <p className="text-gray-500 col-span-full text-center py-8">No voices match your criteria.</p>
         )}
       </div>
     </div>

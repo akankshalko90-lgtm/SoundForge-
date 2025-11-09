@@ -5,30 +5,95 @@ import { GeneratorPanel } from './components/GeneratorPanel';
 import { VoiceCustomization } from './components/VoiceCustomization';
 import { JobHistory } from './components/JobHistory';
 import { VOICES } from './constants';
-import type { Voice, Emotion, NarrationStyle, Job, Accent, Chunk } from './types';
-import { generateSpeech, detectEmotion, parseIntelligentScript, detectEmotions } from './services/geminiService';
-import { decode, decodeAudioData, concatenateUint8Arrays, encode, createWavBlob } from './utils/audioUtils';
+import type { Voice, Emotion, NarrationStyle, Job, Accent, Chunk, DefinedCharacter, SpecialEffect, ExportFormat, SampleRate, BitDepth } from './types';
+import { generateSpeech, parseIntelligentScript, detectEmotions, detectEmotion, detectEffect, detectNarrationStyle } from './services/geminiService';
+import { decode, decodeAudioData, concatenateUint8Arrays, encode, createWavBlob, createMp3Blob, createOggBlob } from './utils/audioUtils';
+import { detectGenderFromName } from './utils/textUtils';
 
 const App: React.FC = () => {
   const [selectedVoice, setSelectedVoice] = useState<Voice | null>(VOICES[0]);
   const [emotion, setEmotion] = useState<Emotion>('Neutral');
   const [narrationStyle, setNarrationStyle] = useState<NarrationStyle>('Default');
+  const [autoDetectNarrationStyle, setAutoDetectNarrationStyle] = useState<boolean>(false);
   const [accent, setAccent] = useState<Accent>('Default');
+  const [speed, setSpeed] = useState<number>(50);
+  const [loudness, setLoudness] = useState<number>(75);
+  const [pitch, setPitch] = useState<number>(50);
+  const [volume, setVolume] = useState<number>(80);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isPreviewing, setIsPreviewing] = useState<boolean>(false);
+  const [isCustomizationLocked, setIsCustomizationLocked] = useState<boolean>(false);
   const [progress, setProgress] = useState<number>(0);
   const [generatedAudio, setGeneratedAudio] = useState<string | null>(null);
-  const [jobs, setJobs] = useState<Job[]>([]);
+  const [jobs, setJobs] = useState<Job[]>(() => {
+    try {
+        const savedJobs = window.localStorage.getItem('soundforge-jobs');
+         // Simple validation to avoid corrupted data
+        if (savedJobs) {
+            const parsed = JSON.parse(savedJobs);
+            if (Array.isArray(parsed)) {
+                return parsed;
+            }
+        }
+        return [];
+    } catch (error) {
+        console.error("Could not load jobs from local storage", error);
+        return [];
+    }
+  });
+  const [definedCharacters, setDefinedCharacters] = useState<DefinedCharacter[]>([]);
+  const [playingSampleVoiceId, setPlayingSampleVoiceId] = useState<string | null>(null);
+  const [smartEmotionBlend, setSmartEmotionBlend] = useState<boolean>(false);
+  const [blendEmotion, setBlendEmotion] = useState<Emotion>('Neutral');
+  const [specialEffect, setSpecialEffect] = useState<SpecialEffect>('None');
+  const [exportFormat, setExportFormat] = useState<ExportFormat>('wav');
+  const [exportBitrate, setExportBitrate] = useState<number>(192);
+  const [sampleRate, setSampleRate] = useState<SampleRate>(24000);
+  const [bitDepth, setBitDepth] = useState<BitDepth>(16);
+
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const gainNodeRef = useRef<GainNode | null>(null);
 
   useEffect(() => {
     // FIX: Cast window to `any` to allow `webkitAudioContext` for older browser compatibility.
-    audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+    const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+    if (AudioContext) {
+      audioContextRef.current = new AudioContext({ sampleRate: 24000 });
+      gainNodeRef.current = audioContextRef.current.createGain();
+      gainNodeRef.current.gain.value = volume / 100;
+      gainNodeRef.current.connect(audioContextRef.current.destination);
+    }
+    
     return () => {
       audioContextRef.current?.close();
     };
   }, []);
+
+  useEffect(() => {
+    try {
+        // FIX: Strip audio data before saving to localStorage to prevent exceeding quota.
+        const jobsToSave = jobs.map(job => ({
+            ...job,
+            audioData: null, // Don't save the large combined audio string
+            chunks: job.chunks.map(chunk => ({
+                ...chunk,
+                audioData: null, // Don't save individual chunk audio strings
+            })),
+        }));
+        window.localStorage.setItem('soundforge-jobs', JSON.stringify(jobsToSave));
+    } catch (error) {
+        console.error("Could not save jobs to local storage", error);
+    }
+  }, [jobs]);
+
+  const handleVolumeChange = (newVolume: number) => {
+    setVolume(newVolume);
+    if (gainNodeRef.current) {
+        gainNodeRef.current.gain.value = newVolume / 100;
+    }
+  };
 
   const stopCurrentPlayback = () => {
     if (audioSourceRef.current) {
@@ -43,7 +108,7 @@ const App: React.FC = () => {
   };
 
   const playAudio = async (base64Audio: string) => {
-    if (!audioContextRef.current) return;
+    if (!audioContextRef.current || !gainNodeRef.current) return;
     
     if (audioContextRef.current.state === 'suspended') {
       await audioContextRef.current.resume();
@@ -57,7 +122,7 @@ const App: React.FC = () => {
       
       const source = audioContextRef.current.createBufferSource();
       source.buffer = audioBuffer;
-      source.connect(audioContextRef.current.destination);
+      source.connect(gainNodeRef.current);
       source.start();
       audioSourceRef.current = source;
     } catch (error) {
@@ -66,10 +131,25 @@ const App: React.FC = () => {
     }
   };
 
-  const handleDownload = (base64Audio: string, fileName: string) => {
+  const handleDownload = (base64Audio: string, fileName: string, format: ExportFormat, bitrate: number, sampleRate: SampleRate, bitDepth: BitDepth) => {
     if (!base64Audio) return;
     const pcmData = decode(base64Audio);
-    const blob = createWavBlob(pcmData, 24000, 1);
+    
+    let blob: Blob;
+    switch (format) {
+      case 'mp3':
+        blob = createMp3Blob(pcmData, 24000, 1, bitrate);
+        break;
+      case 'ogg':
+        blob = createOggBlob(pcmData, 24000, 1, bitrate);
+        break;
+      case 'wav':
+      default:
+        // The API provides 24kHz, 16-bit audio. The parameters are passed for header correctness.
+        blob = createWavBlob(pcmData, sampleRate, 1, bitDepth);
+        break;
+    }
+
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -80,7 +160,79 @@ const App: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  const handleGenerate = async (text: string, isLongForm: boolean, autoDetectEmotion: boolean, autoDetectSpeakers: boolean) => {
+  const previewTexts: { [key: string]: string } = {
+      'English': "Hello, this is a sample of my voice.",
+      'Hindi': "नमस्ते, यह मेरी आवाज़ का एक नमूना है।",
+      'Tamil': "வணக்கம், இது என் குரலின் ஒரு மாதிரி.",
+      'Bengali': "নমস্কার, এটি আমার কণ্ঠের একটি নমুনা।",
+      'Telugu': "నమస్కారం, ఇది నా స్వరానికి ఒక నమూనా.",
+      'Marathi': "नमस्कार, हा माझ्या आवाजाचा नमुना आहे.",
+      'Gujarati': "નમસ્તે, આ મારા અવાજનો નમૂનો છે.",
+      'Kannada': "ನಮಸ್ಕಾರ, ಇದು ನನ್ನ ಧ್ವನಿಯ ಮಾದರಿ.",
+      'Malayalam': "നമസ്കാരം, ഇത് എൻ്റെ ശബ്ദത്തിൻ്റെ ഒരു സാമ്പിൾ ആണ്.",
+      'Punjabi': "ਸਤ ਸ੍ਰੀ ਅਕਾਲ, ਇਹ ਮੇਰੀ ਆਵਾਜ਼ ਦਾ ਇੱਕ ਨਮੂনা ਹੈ।",
+      'Odia': "ନମସ୍କାର, ଏହା ମୋ ସ୍ୱରର ଏକ ନମୁନା ଅଟେ।",
+      'Assamese': "নমস্কাৰ, এইটো মোৰ মাতৰ এটা নমুনা।",
+      'Urdu': "ہیلو، یہ میری آواز کا ایک نمونہ ہے۔",
+  };
+
+  const handlePlaySample = async (voiceId: string) => {
+      stopCurrentPlayback();
+      setPlayingSampleVoiceId(voiceId);
+      try {
+          const voice = VOICES.find(v => v.id === voiceId);
+          if (!voice) throw new Error("Voice not found");
+          
+          const baseLanguage = voice.language.split(' ')[0];
+          const sampleText = previewTexts[baseLanguage] || "Hello, you can listen to my voice now.";
+
+          const audioBase64 = await generateSpeech(sampleText, voice.apiId, 'Neutral', 'Default', voice.languageCode, 'Default', 50, false, 'Neutral', 75, 50, 'None');
+          await playAudio(audioBase64);
+      } catch (error) {
+          console.error("Error playing voice sample:", error);
+          alert("Could not play voice sample. See console for details.");
+      } finally {
+          setPlayingSampleVoiceId(null);
+      }
+  };
+
+  const handlePreview = async () => {
+    if (!selectedVoice) {
+      alert("Please select a voice to preview.");
+      return;
+    }
+    
+    setIsPreviewing(true);
+    stopCurrentPlayback();
+
+    try {
+        const baseLanguage = selectedVoice.language.split(' ')[0];
+        const previewText = previewTexts[baseLanguage] || "This is a preview of the current voice settings.";
+
+        const audioBase64 = await generateSpeech(
+            previewText,
+            selectedVoice.apiId,
+            emotion,
+            narrationStyle,
+            selectedVoice.languageCode,
+            accent,
+            speed,
+            smartEmotionBlend,
+            blendEmotion,
+            loudness,
+            pitch,
+            specialEffect
+        );
+        await playAudio(audioBase64);
+    } catch (error) {
+        console.error("Error generating preview:", error);
+        alert("Could not generate preview. See console for details.");
+    } finally {
+        setIsPreviewing(false);
+    }
+  };
+
+  const handleGenerate = async (text: string, isLongForm: boolean, autoDetectEmotion: boolean, autoDetectSpeakers: boolean, autoDetectEffect: boolean, autoDetectNarrationStyle: boolean) => {
     if (!selectedVoice) {
       alert("Please select a voice first.");
       return;
@@ -99,13 +251,17 @@ const App: React.FC = () => {
           voiceId: string;
           speaker: string | null;
           emotion: Emotion;
+          effect: SpecialEffect;
+          narrationStyle: NarrationStyle;
        }[] = [];
 
       if (autoDetectSpeakers) {
          try {
-            const intelligentChunks = await parseIntelligentScript(text, autoDetectEmotion);
+            const intelligentChunks = await parseIntelligentScript(text, autoDetectEmotion, autoDetectEffect, definedCharacters, autoDetectNarrationStyle);
 
             const speakerVoiceMap = new Map<string, string>();
+            const definedCharacterMap = new Map(definedCharacters.map(c => [c.name.toLowerCase(), c.gender]));
+
             const femaleVoices = VOICES.filter(v => v.gender === 'Female');
             const maleVoices = VOICES.filter(v => v.gender === 'Male');
             
@@ -136,14 +292,27 @@ const App: React.FC = () => {
                         if (speakerVoiceMap.has(speakerId)) {
                             voiceId = speakerVoiceMap.get(speakerId)!;
                         } else {
-                            const assignedGender = chunk.gender || 'Neutral';
+                            // Gender detection hierarchy:
+                            // 1. User-defined character
+                            // 2. AI-inferred gender
+                            // 3. Name-based gender detection
+                            let assignedGender: 'Male' | 'Female' | 'Neutral' = 'Neutral';
+                            const definedGender = definedCharacterMap.get(speakerId.toLowerCase());
+                            if (definedGender === 'Male' || definedGender === 'Female') {
+                                assignedGender = definedGender;
+                            } else if (chunk.gender && chunk.gender !== 'Neutral') {
+                                assignedGender = chunk.gender;
+                            } else if (chunk.speaker) {
+                                assignedGender = detectGenderFromName(chunk.speaker);
+                            }
+
                             if (assignedGender === 'Female' && femaleVoices.length > 0) {
                                 voiceId = femaleVoices[femaleIndex % femaleVoices.length].id;
                                 femaleIndex++;
                             } else if (assignedGender === 'Male' && maleVoices.length > 0) {
                                 voiceId = maleVoices[maleIndex % maleVoices.length].id;
                                 maleIndex++;
-                            } else {
+                            } else { // Fallback for Neutral or if no voices of detected gender exist
                                 if ((femaleIndex + maleIndex) % 2 === 0 && femaleVoices.length > 0) {
                                   voiceId = femaleVoices[femaleIndex % femaleVoices.length].id;
                                   femaleIndex++;
@@ -151,13 +320,20 @@ const App: React.FC = () => {
                                   voiceId = maleVoices[maleIndex % maleVoices.length].id;
                                   maleIndex++;
                                 } else {
-                                  voiceId = selectedVoice.id;
+                                  voiceId = selectedVoice.id; // Absolute fallback
                                 }
                             }
                             speakerVoiceMap.set(speakerId, voiceId);
                         }
                     }
-                    return { text: chunk.text, voiceId, speaker: speakerId, emotion: (autoDetectEmotion && chunk.emotion) ? chunk.emotion : emotion };
+                    return { 
+                      text: chunk.text, 
+                      voiceId, 
+                      speaker: speakerId, 
+                      emotion: (autoDetectEmotion && chunk.emotion) ? chunk.emotion : emotion,
+                      effect: (autoDetectEffect && chunk.effect) ? chunk.effect : specialEffect,
+                      narrationStyle: (autoDetectNarrationStyle && chunk.narrationStyle) ? chunk.narrationStyle : narrationStyle,
+                    };
             });
         } catch (error) {
             console.error(error);
@@ -173,12 +349,18 @@ const App: React.FC = () => {
         const chunkEmotions = autoDetectEmotion 
           ? await detectEmotions(chunkTexts) 
           : new Array(chunkTexts.length).fill(emotion);
+        
+        const finalNarrationStyle = autoDetectNarrationStyle 
+          ? (await detectNarrationStyle(text)) ?? narrationStyle 
+          : narrationStyle;
           
         chunksToProcess = chunkTexts.map((s, index) => ({ 
           text: s.trim(), 
           voiceId: selectedVoice.id, 
           speaker: null,
-          emotion: chunkEmotions[index] ?? emotion
+          emotion: chunkEmotions[index] ?? emotion,
+          effect: specialEffect,
+          narrationStyle: finalNarrationStyle,
         }));
       }
       
@@ -195,6 +377,8 @@ const App: React.FC = () => {
         voiceId: chunk.voiceId,
         speaker: chunk.speaker ?? undefined,
         emotion: chunk.emotion,
+        effect: chunk.effect,
+        narrationStyle: chunk.narrationStyle,
       }));
 
       const newJob: Job = {
@@ -207,25 +391,31 @@ const App: React.FC = () => {
       setJobs(prev => [newJob, ...prev]);
 
       let completedChunksCount = 0;
+      const audioChunks: (Uint8Array | null)[] = [];
+      const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
 
-      const chunkPromises = newJob.chunks.map(async (chunk) => {
+      for (const chunk of newJob.chunks) {
         try {
           const chunkEmotion = chunk.emotion!;
+          const chunkEffect = chunk.effect!;
+          const chunkNarrationStyle = chunk.narrationStyle!;
           const voiceForChunk = chunk.voiceId ? VOICES.find(v => v.id === chunk.voiceId) || selectedVoice : selectedVoice;
           
-          const audioBase64 = await generateSpeech(chunk.text, voiceForChunk.id, chunkEmotion, narrationStyle, voiceForChunk.language, accent);
+          const audioBase64 = await generateSpeech(chunk.text, voiceForChunk.apiId, chunkEmotion, chunkNarrationStyle, voiceForChunk.languageCode, accent, speed, smartEmotionBlend, blendEmotion, loudness, pitch, chunkEffect);
           
-          completedChunksCount++;
-          setProgress((completedChunksCount / newJob.chunks.length) * 100);
-          setJobs(prev => prev.map(j => j.id === jobId ? { ...j, chunks: j.chunks.map(c => c.id === chunk.id ? { ...c, status: 'completed', audioData: audioBase64, emotion: chunkEmotion } : c) } : j));
-          return decode(audioBase64);
+          setJobs(prev => prev.map(j => j.id === jobId ? { ...j, chunks: j.chunks.map(c => c.id === chunk.id ? { ...c, status: 'completed', audioData: audioBase64, emotion: chunkEmotion, effect: chunkEffect, narrationStyle: chunkNarrationStyle } : c) } : j));
+          audioChunks.push(decode(audioBase64));
         } catch (error) {
           setJobs(prev => prev.map(j => j.id === jobId ? { ...j, chunks: j.chunks.map(c => c.id === chunk.id ? { ...c, status: 'failed' } : c) } : j));
-          return null;
+          audioChunks.push(null);
         }
-      });
+        completedChunksCount++;
+        setProgress((completedChunksCount / newJob.chunks.length) * 100);
+        if (completedChunksCount < newJob.chunks.length) {
+            await delay(200);
+        }
+      }
       
-      const audioChunks = await Promise.all(chunkPromises);
       const successfulChunks = audioChunks.filter((c): c is Uint8Array => c !== null);
       
       if (successfulChunks.length > 0) {
@@ -246,12 +436,14 @@ const App: React.FC = () => {
       setJobs(prev => [newJob, ...prev]);
       try {
         const finalEmotion = autoDetectEmotion ? (await detectEmotion(text)) ?? emotion : emotion;
-        const finalAudioData = await generateSpeech(text, selectedVoice.id, finalEmotion, narrationStyle, selectedVoice.language, accent);
+        const finalEffect = autoDetectEffect ? (await detectEffect(text)) ?? specialEffect : specialEffect;
+        const finalNarrationStyle = autoDetectNarrationStyle ? (await detectNarrationStyle(text)) ?? narrationStyle : narrationStyle;
+        const finalAudioData = await generateSpeech(text, selectedVoice.apiId, finalEmotion, finalNarrationStyle, selectedVoice.languageCode, accent, speed, smartEmotionBlend, blendEmotion, loudness, pitch, finalEffect);
         setGeneratedAudio(finalAudioData);
         await playAudio(finalAudioData);
         setJobs(prev => prev.map(j => j.id === jobId ? {
           ...j, status: 'completed', audioData: finalAudioData,
-          chunks: j.chunks.map(c => ({...c, status: 'completed', audioData: finalAudioData, emotion: finalEmotion }))
+          chunks: j.chunks.map(c => ({...c, status: 'completed', audioData: finalAudioData, emotion: finalEmotion, effect: finalEffect, narrationStyle: finalNarrationStyle }))
         } : j));
       } catch (error) {
          console.error("Error generating short-form speech:", error);
@@ -278,6 +470,8 @@ const App: React.FC = () => {
                 setGeneratedAudio(null);
                 setSelectedVoice(voice);
               }}
+              onPlaySample={handlePlaySample}
+              playingSampleVoiceId={playingSampleVoiceId}
             />
             <GeneratorPanel 
               selectedVoice={selectedVoice}
@@ -288,8 +482,18 @@ const App: React.FC = () => {
               setEmotion={setEmotion}
               narrationStyle={narrationStyle}
               setNarrationStyle={setNarrationStyle}
+              autoDetectNarrationStyle={autoDetectNarrationStyle}
+              setAutoDetectNarrationStyle={setAutoDetectNarrationStyle}
               accent={accent}
               setAccent={setAccent}
+              definedCharacters={definedCharacters}
+              setDefinedCharacters={setDefinedCharacters}
+              smartEmotionBlend={smartEmotionBlend}
+              setSmartEmotionBlend={setSmartEmotionBlend}
+              blendEmotion={blendEmotion}
+              setBlendEmotion={setBlendEmotion}
+              specialEffect={specialEffect}
+              setSpecialEffect={setSpecialEffect}
             />
           </div>
           <div className="lg:col-span-2 space-y-8">
@@ -297,13 +501,36 @@ const App: React.FC = () => {
               selectedVoice={selectedVoice}
               generatedAudio={generatedAudio}
               emotion={emotion}
-              onDownload={handleDownload}
+              onDownload={(audioData, fileName, format, bitrate) => handleDownload(audioData, fileName, format, bitrate, sampleRate, bitDepth)}
+              speed={speed}
+              onSpeedChange={setSpeed}
+              loudness={loudness}
+              onLoudnessChange={setLoudness}
+              pitch={pitch}
+              onPitchChange={setPitch}
+              volume={volume}
+              onVolumeChange={handleVolumeChange}
+              smartEmotionBlend={smartEmotionBlend}
+              blendEmotion={blendEmotion}
+              specialEffect={specialEffect}
+              exportFormat={exportFormat}
+              onExportFormatChange={setExportFormat}
+              exportBitrate={exportBitrate}
+              onExportBitrateChange={setExportBitrate}
+              onPreview={handlePreview}
+              isPreviewing={isPreviewing}
+              isLocked={isCustomizationLocked}
+              onLockedChange={setIsCustomizationLocked}
+              sampleRate={sampleRate}
+              onSampleRateChange={setSampleRate}
+              bitDepth={bitDepth}
+              onBitDepthChange={setBitDepth}
             />
             <JobHistory 
               jobs={jobs}
               voices={VOICES}
               onPlay={playAudio}
-              onDownload={handleDownload}
+              onDownload={(audioData, fileName) => handleDownload(audioData, fileName, 'wav', 192, 24000, 16)}
             />
           </div>
         </main>
