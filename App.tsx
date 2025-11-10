@@ -50,11 +50,14 @@ const App: React.FC = () => {
   const [exportBitrate, setExportBitrate] = useState<number>(192);
   const [sampleRate, setSampleRate] = useState<SampleRate>(24000);
   const [bitDepth, setBitDepth] = useState<BitDepth>(16);
+  const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
 
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
+  const audioDataCache = useRef<Map<string, string>>(new Map());
+
 
   useEffect(() => {
     // FIX: Cast window to `any` to allow `webkitAudioContext` for older browser compatibility.
@@ -97,6 +100,8 @@ const App: React.FC = () => {
 
   const stopCurrentPlayback = () => {
     if (audioSourceRef.current) {
+      // Prevent the 'onended' callback from firing when we manually stop the audio.
+      audioSourceRef.current.onended = null;
       try {
         audioSourceRef.current.stop();
       } catch (e) {
@@ -105,17 +110,19 @@ const App: React.FC = () => {
       audioSourceRef.current.disconnect();
       audioSourceRef.current = null;
     }
+    setPlayingAudioId(null);
   };
 
-  const playAudio = async (base64Audio: string) => {
+  const playAudio = async (base64Audio: string, audioId: string) => {
     if (!audioContextRef.current || !gainNodeRef.current) return;
     
+    // Stop any currently playing audio before starting a new one.
+    stopCurrentPlayback();
+
     if (audioContextRef.current.state === 'suspended') {
       await audioContextRef.current.resume();
     }
     
-    stopCurrentPlayback();
-
     try {
       const pcmData = decode(base64Audio);
       const audioBuffer = await decodeAudioData(pcmData, audioContextRef.current, 24000, 1);
@@ -123,11 +130,24 @@ const App: React.FC = () => {
       const source = audioContextRef.current.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(gainNodeRef.current);
+      
+      source.onended = () => {
+        // This event fires when the audio finishes playing naturally.
+        // We only clear state if this specific source was the one that ended
+        // to prevent race conditions.
+        if (audioSourceRef.current === source) {
+          audioSourceRef.current = null;
+          setPlayingAudioId(null);
+        }
+      };
+      
       source.start();
       audioSourceRef.current = source;
+      setPlayingAudioId(audioId);
     } catch (error) {
       console.error("Error playing audio:", error);
       alert("Failed to play audio. See console for details.");
+      setPlayingAudioId(null); // Ensure state is clean after an error
     }
   };
 
@@ -159,6 +179,27 @@ const App: React.FC = () => {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
+  
+  const handlePlayFromHistory = (audioId: string) => {
+    const audioData = audioDataCache.current.get(audioId);
+    if (audioData) {
+        playAudio(audioData, audioId);
+    } else {
+        console.warn(`Audio data not found in cache for ID: ${audioId}`);
+        alert("Could not find audio data to play. It may have been cleared after a page reload.");
+    }
+  };
+
+  const handleDownloadFromHistory = (audioId: string, fileName: string, format: ExportFormat) => {
+      const audioData = audioDataCache.current.get(audioId);
+      if (audioData) {
+          handleDownload(audioData, fileName, format, exportBitrate, sampleRate, bitDepth);
+      } else {
+          console.warn(`Audio data not found in cache for ID: ${audioId}`);
+          alert("Could not find audio data to download. It may have been cleared after a page reload.");
+      }
+  };
+
 
   const previewTexts: { [key: string]: string } = {
       'English': "Hello, this is a sample of my voice.",
@@ -169,7 +210,7 @@ const App: React.FC = () => {
       'Marathi': "नमस्कार, हा माझ्या आवाजाचा नमुना आहे.",
       'Gujarati': "નમસ્તે, આ મારા અવાજનો નમૂનો છે.",
       'Kannada': "ನಮಸ್ಕಾರ, ಇದು ನನ್ನ ಧ್ವನಿಯ ಮಾದರಿ.",
-      'Malayalam': "നമസ്കാരം, ഇത് എൻ്റെ ശബ്ദത്തിൻ്റെ ഒരു സാമ്പിൾ ആണ്.",
+      'Malayalam': "നമസ്കാരം, ഇത് എൻ്റെ ശബ്ദത്തിൻറെ ഒരു സാമ്പിൾ ആണ്.",
       'Punjabi': "ਸਤ ਸ੍ਰੀ ਅਕਾਲ, ਇਹ ਮੇਰੀ ਆਵਾਜ਼ ਦਾ ਇੱਕ ਨਮੂনা ਹੈ।",
       'Odia': "ନମସ୍କାର, ଏହା ମୋ ସ୍ୱରର ଏକ ନମୁନା ଅଟେ।",
       'Assamese': "নমস্কাৰ, এইটো মোৰ মাতৰ এটা নমুনা।",
@@ -177,7 +218,6 @@ const App: React.FC = () => {
   };
 
   const handlePlaySample = async (voiceId: string) => {
-      stopCurrentPlayback();
       setPlayingSampleVoiceId(voiceId);
       try {
           const voice = VOICES.find(v => v.id === voiceId);
@@ -187,7 +227,7 @@ const App: React.FC = () => {
           const sampleText = previewTexts[baseLanguage] || "Hello, you can listen to my voice now.";
 
           const audioBase64 = await generateSpeech(sampleText, voice.apiId, 'Neutral', 'Default', voice.languageCode, 'Default', 50, false, 'Neutral', 75, 50, 'None');
-          await playAudio(audioBase64);
+          await playAudio(audioBase64, voiceId);
       } catch (error) {
           console.error("Error playing voice sample:", error);
           alert("Could not play voice sample. See console for details.");
@@ -203,7 +243,6 @@ const App: React.FC = () => {
     }
     
     setIsPreviewing(true);
-    stopCurrentPlayback();
 
     try {
         const baseLanguage = selectedVoice.language.split(' ')[0];
@@ -223,7 +262,7 @@ const App: React.FC = () => {
             pitch,
             specialEffect
         );
-        await playAudio(audioBase64);
+        await playAudio(audioBase64, `preview-${selectedVoice.id}`);
     } catch (error) {
         console.error("Error generating preview:", error);
         alert("Could not generate preview. See console for details.");
@@ -241,7 +280,6 @@ const App: React.FC = () => {
     setIsLoading(true);
     setProgress(0);
     setGeneratedAudio(null);
-    stopCurrentPlayback();
     
     const jobId = `job-${Date.now()}`;
 
@@ -393,26 +431,70 @@ const App: React.FC = () => {
       let completedChunksCount = 0;
       const audioChunks: (Uint8Array | null)[] = [];
       const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
+      const MAX_RETRIES = 3;
+      const RETRY_DELAY = 500;
 
       for (const chunk of newJob.chunks) {
-        try {
-          const chunkEmotion = chunk.emotion!;
-          const chunkEffect = chunk.effect!;
-          const chunkNarrationStyle = chunk.narrationStyle!;
-          const voiceForChunk = chunk.voiceId ? VOICES.find(v => v.id === chunk.voiceId) || selectedVoice : selectedVoice;
-          
-          const audioBase64 = await generateSpeech(chunk.text, voiceForChunk.apiId, chunkEmotion, chunkNarrationStyle, voiceForChunk.languageCode, accent, speed, smartEmotionBlend, blendEmotion, loudness, pitch, chunkEffect);
-          
-          setJobs(prev => prev.map(j => j.id === jobId ? { ...j, chunks: j.chunks.map(c => c.id === chunk.id ? { ...c, status: 'completed', audioData: audioBase64, emotion: chunkEmotion, effect: chunkEffect, narrationStyle: chunkNarrationStyle } : c) } : j));
-          audioChunks.push(decode(audioBase64));
-        } catch (error) {
-          setJobs(prev => prev.map(j => j.id === jobId ? { ...j, chunks: j.chunks.map(c => c.id === chunk.id ? { ...c, status: 'failed' } : c) } : j));
-          audioChunks.push(null);
+        // Find the voice for this chunk BEFORE the retry loop for validation.
+        const voiceForChunk = chunk.voiceId ? VOICES.find(v => v.id === chunk.voiceId) : selectedVoice;
+
+        // Explicitly check if a specific voice ID was required but not found.
+        if (chunk.voiceId && !voiceForChunk) {
+            console.error(`Could not find voice with ID "${chunk.voiceId}" for chunk. Marking as failed to prevent using wrong voice.`);
+            setJobs(prev => prev.map(j => j.id === jobId ? { ...j, chunks: j.chunks.map(c => c.id === chunk.id ? { ...c, status: 'failed' } : c) } : j));
+            audioChunks.push(null);
+            completedChunksCount++;
+            setProgress((completedChunksCount / newJob.chunks.length) * 100);
+            continue; // Move to the next chunk
         }
+
+        // This check is for safety, should not be hit if selectedVoice logic is sound.
+        if (!voiceForChunk) {
+            console.error(`No voice available for chunk. Skipping.`);
+            setJobs(prev => prev.map(j => j.id === jobId ? { ...j, chunks: j.chunks.map(c => c.id === chunk.id ? { ...c, status: 'failed' } : c) } : j));
+            audioChunks.push(null);
+            completedChunksCount++;
+            setProgress((completedChunksCount / newJob.chunks.length) * 100);
+            continue;
+        }
+
+        let success = false;
+        
+        // Set chunk to processing for visual feedback
+        setJobs(prev => prev.map(j => j.id === jobId ? { ...j, chunks: j.chunks.map(c => c.id === chunk.id ? { ...c, status: 'processing' } : c) } : j));
+
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            try {
+                const chunkEmotion = chunk.emotion!;
+                const chunkEffect = chunk.effect!;
+                const chunkNarrationStyle = chunk.narrationStyle!;
+                
+                const audioBase64 = await generateSpeech(chunk.text, voiceForChunk.apiId, chunkEmotion, chunkNarrationStyle, voiceForChunk.languageCode, accent, speed, smartEmotionBlend, blendEmotion, loudness, pitch, chunkEffect);
+                
+                audioDataCache.current.set(chunk.id, audioBase64);
+
+                setJobs(prev => prev.map(j => j.id === jobId ? { ...j, chunks: j.chunks.map(c => c.id === chunk.id ? { ...c, status: 'completed', audioData: null, emotion: chunkEmotion, effect: chunkEffect, narrationStyle: chunkNarrationStyle } : c) } : j));
+                audioChunks.push(decode(audioBase64));
+                success = true;
+                break; // Exit retry loop on success
+            } catch (error) {
+                console.error(`Attempt ${attempt + 1} of ${MAX_RETRIES} failed for chunk "${chunk.text.slice(0, 20)}...":`, error);
+                if (attempt < MAX_RETRIES - 1) {
+                    await delay(RETRY_DELAY * (attempt + 1)); // Simple increasing backoff
+                }
+            }
+        }
+
+        if (!success) {
+            // All retries failed, mark as failed
+            setJobs(prev => prev.map(j => j.id === jobId ? { ...j, chunks: j.chunks.map(c => c.id === chunk.id ? { ...c, status: 'failed' } : c) } : j));
+            audioChunks.push(null);
+        }
+
         completedChunksCount++;
         setProgress((completedChunksCount / newJob.chunks.length) * 100);
         if (completedChunksCount < newJob.chunks.length) {
-            await delay(200);
+            await delay(200); // Delay between processing different chunks
         }
       }
       
@@ -421,9 +503,10 @@ const App: React.FC = () => {
       if (successfulChunks.length > 0) {
         const combinedPcm = concatenateUint8Arrays(successfulChunks);
         const finalAudioData = encode(combinedPcm);
+        audioDataCache.current.set(jobId, finalAudioData);
         setGeneratedAudio(finalAudioData);
-        await playAudio(finalAudioData);
-        setJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: 'completed', audioData: finalAudioData } : j));
+        await playAudio(finalAudioData, jobId);
+        setJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: 'completed', audioData: null } : j));
       } else {
         alert('Audio generation failed for all chunks. This might be due to API rate limits or network issues. Please check your script and try again.');
         setJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: 'failed' } : j));
@@ -439,11 +522,15 @@ const App: React.FC = () => {
         const finalEffect = autoDetectEffect ? (await detectEffect(text)) ?? specialEffect : specialEffect;
         const finalNarrationStyle = autoDetectNarrationStyle ? (await detectNarrationStyle(text)) ?? narrationStyle : narrationStyle;
         const finalAudioData = await generateSpeech(text, selectedVoice.apiId, finalEmotion, finalNarrationStyle, selectedVoice.languageCode, accent, speed, smartEmotionBlend, blendEmotion, loudness, pitch, finalEffect);
+        
+        audioDataCache.current.set(jobId, finalAudioData);
+        audioDataCache.current.set(`${jobId}-chunk-0`, finalAudioData);
+
         setGeneratedAudio(finalAudioData);
-        await playAudio(finalAudioData);
+        await playAudio(finalAudioData, jobId);
         setJobs(prev => prev.map(j => j.id === jobId ? {
-          ...j, status: 'completed', audioData: finalAudioData,
-          chunks: j.chunks.map(c => ({...c, status: 'completed', audioData: finalAudioData, emotion: finalEmotion, effect: finalEffect, narrationStyle: finalNarrationStyle }))
+          ...j, status: 'completed', audioData: null,
+          chunks: j.chunks.map(c => ({...c, status: 'completed', audioData: null, emotion: finalEmotion, effect: finalEffect, narrationStyle: finalNarrationStyle }))
         } : j));
       } catch (error) {
          console.error("Error generating short-form speech:", error);
@@ -529,8 +616,10 @@ const App: React.FC = () => {
             <JobHistory 
               jobs={jobs}
               voices={VOICES}
-              onPlay={playAudio}
-              onDownload={(audioData, fileName) => handleDownload(audioData, fileName, 'wav', 192, 24000, 16)}
+              onPlay={handlePlayFromHistory}
+              onDownload={handleDownloadFromHistory}
+              playingAudioId={playingAudioId}
+              onStop={stopCurrentPlayback}
             />
           </div>
         </main>

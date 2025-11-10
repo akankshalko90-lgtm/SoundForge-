@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import type { Job, Chunk, Voice } from '../types';
+import React, { useState, useRef, useEffect } from 'react';
+import type { Job, Chunk, Voice, ExportFormat } from '../types';
 
 const StatusIndicator: React.FC<{ status: Job['status'] | Chunk['status'] }> = ({ status }) => {
   const baseClasses = "w-2.5 h-2.5 rounded-full flex-shrink-0";
@@ -14,6 +14,12 @@ const StatusIndicator: React.FC<{ status: Job['status'] | Chunk['status'] }> = (
 
 const PlayIcon: React.FC<{ className?: string }> = ({ className }) => (
     <svg className={className} fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd"></path></svg>
+);
+
+const StopIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <svg className={className} fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clipRule="evenodd" />
+    </svg>
 );
 
 const DownloadIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -38,24 +44,85 @@ const FemaleIcon: React.FC<{ className?: string }> = ({ className }) => (
     </svg>
 );
 
+const DownloadButton: React.FC<{ onDownloadRequest: (format: ExportFormat) => void; iconSizeClass?: string }> = ({ onDownloadRequest, iconSizeClass = "w-5 h-5" }) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const dropdownRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+                setIsOpen(false);
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
+
+    const handleDownload = (format: ExportFormat) => {
+        onDownloadRequest(format);
+        setIsOpen(false);
+    }
+    
+    const stopPropagationAndToggle = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        setIsOpen(!isOpen);
+    };
+
+    return (
+        <div className="relative" ref={dropdownRef}>
+            <button onClick={stopPropagationAndToggle} className="text-gray-400 hover:text-cyan-400 transition-all duration-200 transform hover:scale-110" aria-label="Download audio options">
+                <DownloadIcon className={iconSizeClass} />
+            </button>
+            {isOpen && (
+                <div className="absolute right-0 mt-2 w-28 bg-[#2A2C3C] border border-gray-700 rounded-md shadow-lg z-20">
+                    <ul className="py-1 text-sm text-gray-200">
+                        <li>
+                            <button onClick={() => handleDownload('wav')} className="block w-full text-left px-4 py-2 hover:bg-purple-600/50">WAV</button>
+                        </li>
+                        <li>
+                            <button onClick={() => handleDownload('mp3')} className="block w-full text-left px-4 py-2 hover:bg-purple-600/50">MP3</button>
+                        </li>
+                        <li>
+                            <button onClick={() => handleDownload('ogg')} className="block w-full text-left px-4 py-2 hover:bg-purple-600/50">OGG</button>
+                        </li>
+                    </ul>
+                </div>
+            )}
+        </div>
+    );
+};
+
 interface JobHistoryProps {
   jobs: Job[];
   voices: Voice[];
-  onPlay: (audioData: string) => void;
-  onDownload: (audioData: string, fileName: string) => void;
+  onPlay: (audioId: string) => void;
+  onDownload: (audioId: string, fileName: string, format: ExportFormat) => void;
+  playingAudioId: string | null;
+  onStop: () => void;
 }
 
-const JobHistoryItem: React.FC<{ job: Job; voices: Voice[]; onPlay: JobHistoryProps['onPlay']; onDownload: JobHistoryProps['onDownload'] }> = ({ job, voices, onPlay, onDownload }) => {
+const JobHistoryItem: React.FC<{ 
+    job: Job; 
+    voices: Voice[]; 
+    onPlay: JobHistoryProps['onPlay']; 
+    onDownload: JobHistoryProps['onDownload'];
+    playingAudioId: string | null;
+    onStop: () => void;
+}> = ({ job, voices, onPlay, onDownload, playingAudioId, onStop }) => {
   const [isExpanded, setIsExpanded] = useState(false);
+  const isJobPlaying = job.id === playingAudioId;
 
-  const handleDownloadCombined = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (job.audioData) onDownload(job.audioData, `soundforge_combined_${job.id}.wav`);
+  const handleDownloadCombined = (format: ExportFormat) => {
+    onDownload(job.id, `soundforge_combined_${job.id}.${format}`, format);
   }
 
   const handlePlayCombined = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (job.audioData) onPlay(job.audioData);
+    if (isJobPlaying) {
+        onStop();
+    } else {
+        onPlay(job.id);
+    }
   }
 
   return (
@@ -74,13 +141,11 @@ const JobHistoryItem: React.FC<{ job: Job; voices: Voice[]; onPlay: JobHistoryPr
           </div>
         </div>
         <div className="flex items-center space-x-2 flex-shrink-0">
-          {job.status === 'completed' && job.audioData && (
+          {job.status === 'completed' && (
             <>
-              <button onClick={handleDownloadCombined} className="text-gray-400 hover:text-cyan-400 transition-all duration-200 transform hover:scale-110" aria-label="Download combined audio">
-                <DownloadIcon className="w-5 h-5" />
-              </button>
-              <button onClick={handlePlayCombined} className="text-gray-400 hover:text-cyan-400 transition-all duration-200 transform hover:scale-110" aria-label="Play combined audio">
-                <PlayIcon className="w-6 h-6" />
+              <DownloadButton onDownloadRequest={handleDownloadCombined} />
+              <button onClick={handlePlayCombined} className="text-gray-400 hover:text-cyan-400 transition-all duration-200 transform hover:scale-110" aria-label={isJobPlaying ? "Stop combined audio" : "Play combined audio"}>
+                {isJobPlaying ? <StopIcon className="w-6 h-6" /> : <PlayIcon className="w-6 h-6" />}
               </button>
             </>
           )}
@@ -91,6 +156,20 @@ const JobHistoryItem: React.FC<{ job: Job; voices: Voice[]; onPlay: JobHistoryPr
         <div className="border-t border-gray-700/50 mx-3 my-1 py-2 space-y-1">
           {job.chunks.map((chunk, index) => {
             const voiceForChunk = chunk.voiceId ? voices.find(v => v.id === chunk.voiceId) : null;
+            const isChunkPlaying = chunk.id === playingAudioId;
+
+            const handlePlayChunk = () => {
+                if (isChunkPlaying) {
+                    onStop();
+                } else {
+                    onPlay(chunk.id);
+                }
+            };
+            
+            const handleDownloadChunk = (format: ExportFormat) => {
+              onDownload(chunk.id, `chunk_${job.id}_${index + 1}.${format}`, format);
+            };
+
             return (
               <div key={chunk.id} className="flex items-center justify-between pl-2 pr-1 py-1">
                 <div className="flex items-center space-x-3 min-w-0 flex-1">
@@ -124,13 +203,11 @@ const JobHistoryItem: React.FC<{ job: Job; voices: Voice[]; onPlay: JobHistoryPr
                       {chunk.effect}
                     </span>
                   )}
-                  {chunk.status === 'completed' && chunk.audioData && (
+                  {chunk.status === 'completed' && (
                      <div className="flex items-center space-x-1">
-                        <button onClick={() => onDownload(chunk.audioData!, `chunk_${index + 1}.wav`)} className="text-gray-400 hover:text-cyan-400 transition-all duration-200 transform hover:scale-110" aria-label={`Download chunk ${index + 1}`}>
-                          <DownloadIcon className="w-4 h-4" />
-                        </button>
-                        <button onClick={() => onPlay(chunk.audioData!)} className="text-gray-400 hover:text-cyan-400 transition-all duration-200 transform hover:scale-110" aria-label={`Play chunk ${index + 1}`}>
-                          <PlayIcon className="w-5 h-5" />
+                        <DownloadButton onDownloadRequest={handleDownloadChunk} iconSizeClass="w-4 h-4" />
+                        <button onClick={handlePlayChunk} className="text-gray-400 hover:text-cyan-400 transition-all duration-200 transform hover:scale-110" aria-label={isChunkPlaying ? `Stop chunk ${index + 1}`: `Play chunk ${index + 1}`}>
+                          {isChunkPlaying ? <StopIcon className="w-5 h-5" /> : <PlayIcon className="w-5 h-5" />}
                         </button>
                      </div>
                   )}
@@ -144,13 +221,13 @@ const JobHistoryItem: React.FC<{ job: Job; voices: Voice[]; onPlay: JobHistoryPr
   );
 };
 
-export const JobHistory: React.FC<JobHistoryProps> = ({ jobs, voices, onPlay, onDownload }) => {
+export const JobHistory: React.FC<JobHistoryProps> = ({ jobs, voices, onPlay, onDownload, playingAudioId, onStop }) => {
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-semibold text-gray-200">Job History</h2>
       <div className="bg-[#0D0F1A] p-4 rounded-xl border border-gray-800 space-y-3 max-h-72 overflow-y-auto">
         {jobs.length > 0 ? (
-          jobs.map(job => <JobHistoryItem key={job.id} job={job} voices={voices} onPlay={onPlay} onDownload={onDownload} />)
+          jobs.map(job => <JobHistoryItem key={job.id} job={job} voices={voices} onPlay={onPlay} onDownload={onDownload} playingAudioId={playingAudioId} onStop={onStop} />)
         ) : (
           <p className="text-gray-500 text-center py-8">Your generated audio jobs will appear here.</p>
         )}

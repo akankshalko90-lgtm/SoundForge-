@@ -40,9 +40,8 @@ export async function decodeAudioData(
   return buffer;
 }
 
-// FIX: Add function to create a valid WAV file from raw PCM data.
-// The Gemini API returns raw PCM audio, which needs a WAV header to be a playable .wav file.
-export function createWavBlob(pcmData: Uint8Array, sampleRate: number, numChannels: number, bitsPerSample: 16 | 24 = 16): Blob {
+// Helper to generate the parts of a WAV file (header and data)
+function createWavFileParts(pcmData: Uint8Array, sampleRate: number, numChannels: number, bitsPerSample: 16 | 24): (DataView | Uint8Array)[] {
   const header = new ArrayBuffer(44);
   const view = new DataView(header);
 
@@ -76,7 +75,13 @@ export function createWavBlob(pcmData: Uint8Array, sampleRate: number, numChanne
     }
   }
 
-  return new Blob([view, pcmData], { type: 'audio/wav' });
+  return [view, pcmData];
+}
+
+// Creates a valid WAV file Blob from raw PCM data.
+export function createWavBlob(pcmData: Uint8Array, sampleRate: number, numChannels: number, bitsPerSample: 16 | 24 = 16): Blob {
+    const fileParts = createWavFileParts(pcmData, sampleRate, numChannels, bitsPerSample);
+    return new Blob(fileParts, { type: 'audio/wav' });
 }
 
 export function concatenateUint8Arrays(arrays: Uint8Array[]): Uint8Array {
@@ -96,20 +101,19 @@ export function concatenateUint8Arrays(arrays: Uint8Array[]): Uint8Array {
   return result;
 }
 
-// FIX: Add placeholder functions for MP3 and OGG export.
-// In a real application, this would involve a library like lamejs or ogg-vorbis-encoder.
-// For this environment, we'll simulate the creation by logging and returning a WAV blob with the correct MIME type.
-
+// Placeholder to create an MP3 file.
+// This creates a WAV-structured file but with an MP3 MIME type, which is more robust for downloads than nesting blobs.
 export function createMp3Blob(pcmData: Uint8Array, sampleRate: number, numChannels: number, bitrate: number = 192): Blob {
-  console.log(`Simulating MP3 export at ${bitrate}kbps.`);
-  // This is a placeholder. A real implementation would encode to MP3.
-  const wavBlob = createWavBlob(pcmData, sampleRate, numChannels);
-  return new Blob([wavBlob], { type: 'audio/mpeg' });
+  console.log(`Simulating MP3 export at ${bitrate}kbps. A WAV-structured file will be downloaded.`);
+  // In a real app, you would use an MP3 encoder library here.
+  const fileParts = createWavFileParts(pcmData, sampleRate, numChannels, 16); // MP3 doesn't have bit depth like WAV, 16-bit is a standard source.
+  return new Blob(fileParts, { type: 'audio/mpeg' });
 }
 
+// Placeholder to create an OGG file.
 export function createOggBlob(pcmData: Uint8Array, sampleRate: number, numChannels: number, bitrate: number = 160): Blob {
-  console.log(`Simulating OGG export at ${bitrate}kbps.`);
-  // This is a placeholder. A real implementation would encode to OGG Vorbis.
-  const wavBlob = createWavBlob(pcmData, sampleRate, numChannels);
-  return new Blob([wavBlob], { type: 'audio/ogg' });
+  console.log(`Simulating OGG export at ${bitrate}kbps. A WAV-structured file will be downloaded.`);
+  // In a real app, you would use an OGG encoder library here.
+  const fileParts = createWavFileParts(pcmData, sampleRate, numChannels, 16);
+  return new Blob(fileParts, { type: 'audio/ogg' });
 }

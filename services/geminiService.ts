@@ -99,7 +99,6 @@ export async function generateSpeech(
             config: {
                 responseModalities: [Modality.AUDIO],
                 speechConfig: {
-                    languageCode: languageCode,
                     voiceConfig: {
                         prebuiltVoiceConfig: { voiceName: voiceId },
                     },
@@ -109,12 +108,22 @@ export async function generateSpeech(
 
         const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
         if (!base64Audio) {
-            throw new Error("No audio data received from API.");
+            const candidate = response.candidates?.[0];
+            if (candidate?.finishReason && candidate.finishReason !== 'STOP') {
+                if (candidate.finishReason === 'SAFETY') {
+                    throw new Error("Audio generation failed due to safety filters. Please revise the text.");
+                }
+                throw new Error(`Audio generation stopped unexpectedly. Reason: ${candidate.finishReason}.`);
+            }
+            throw new Error("No audio data received from API. The prompt might be invalid or the voice model is unavailable for the provided text.");
         }
         return base64Audio;
     } catch (error) {
         console.error("Error generating speech:", error);
-        throw new Error("Failed to generate speech. Please check the console for more details.");
+        if (error instanceof Error) {
+          throw error;
+        }
+        throw new Error("An unknown error occurred while generating speech. Please check the console.");
     }
 }
 

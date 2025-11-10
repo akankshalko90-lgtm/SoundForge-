@@ -108,7 +108,7 @@ export interface Voice {
 export interface Chunk {
   id: string;
   text: string;
-  status: 'completed' | 'pending' | 'failed';
+  status: 'completed' | 'pending' | 'failed' | 'processing';
   audioData: string | null;
   emotion?: Emotion;
   voiceId?: string;
